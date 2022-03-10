@@ -14,28 +14,29 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import time
 from geometry_msgs.msg import Pose2D
-from vision_msgs.msg import Detection2D, Detection2DArray, BoundingBox2D, ObjectHypothesisWithPose
+from vision_msgs.msg import (
+    Detection2D,
+    Detection2DArray,
+    BoundingBox2D,
+    ObjectHypothesisWithPose,
+)
 
-physical_devices = tf.config.experimental.list_physical_devices('GPU')
+physical_devices = tf.config.experimental.list_physical_devices("GPU")
 if len(physical_devices) > 0:
-    config = tf.config.experimental.set_memory_growth(
-        physical_devices[0], True)
+    config = tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 
 class YoloV4DetecotrNode(rclpy.node.Node):
     def __init__(self):
         super().__init__("YoloV4_vehicle_detector_node")
-        self.declare_parameter('yolo_v4_model_path', "")
-        self.declare_parameter('image_topic', "test_image")
-        self.declare_parameter('debug', False)
+        self.declare_parameter("yolo_v4_model_path", "")
+        self.declare_parameter("image_topic", "test_image")
+        self.declare_parameter("debug", False)
         self.declare_parameter("height", 896)
         self.declare_parameter("width", 1536)
-        self.debug = self.get_parameter(
-            'debug').get_parameter_value().bool_value
-        self.HEIGHT = self.get_parameter(
-            'height').get_parameter_value().integer_value
-        self.WIDTH = self.get_parameter(
-            'width').get_parameter_value().integer_value
+        self.debug = self.get_parameter("debug").get_parameter_value().bool_value
+        self.HEIGHT = self.get_parameter("height").get_parameter_value().integer_value
+        self.WIDTH = self.get_parameter("width").get_parameter_value().integer_value
         self.model = YOLOv4(
             input_shape=(self.HEIGHT, self.WIDTH, 3),
             anchors=YOLOV4_ANCHORS,
@@ -46,21 +47,23 @@ class YoloV4DetecotrNode(rclpy.node.Node):
             yolo_score_threshold=0.73,
         )
 
-        self.yolo_v4_weight_path = Path(self.get_parameter(
-            'yolo_v4_model_path').get_parameter_value().string_value)
+        self.yolo_v4_weight_path = Path(
+            self.get_parameter("yolo_v4_model_path").get_parameter_value().string_value
+        )
         self.get_logger().info(f"{self.yolo_v4_weight_path}")
         self.model.load_weights(self.yolo_v4_weight_path.as_posix())
         self.bridge = CvBridge()
         self.subscription = self.create_subscription(
             Image,
-            self.get_parameter(
-                'image_topic').get_parameter_value().string_value,
+            self.get_parameter("image_topic").get_parameter_value().string_value,
             self.on_image_received,
-            10)
+            10,
+        )
         self.subscription  # prevent unused variable warning
 
-        self.detetion_publisher = self.create_publisher(
-            Detection2DArray, 'yolov4_output', 10)
+        self.detection_publisher = self.create_publisher(
+            Detection2DArray, "yolov4_output", 10
+        )
 
     def find_boxes_in_orig_image(self, orig_img, predicted_img, boxes):
 
@@ -88,12 +91,13 @@ class YoloV4DetecotrNode(rclpy.node.Node):
         start = time.time()
         try:
             result_img, boxes, scores = self.proccess_frame(
-                tf.convert_to_tensor(rgb_img), self.model)
+                tf.convert_to_tensor(rgb_img), self.model
+            )
 
             # convert the bounding boxes back to original image's size
-            new_boxes = self.find_boxes_in_orig_image(orig_img=rgb_img,
-                                                      predicted_img=result_img,
-                                                      boxes=boxes)
+            new_boxes = self.find_boxes_in_orig_image(
+                orig_img=rgb_img, predicted_img=result_img, boxes=boxes
+            )
             detections = Detection2DArray()
             # convert them to vision_msg format
             for box, score in zip(new_boxes, scores):
@@ -101,53 +105,130 @@ class YoloV4DetecotrNode(rclpy.node.Node):
                 center = ((max_x + min_x) / 2, (max_y + min_y) / 2)
 
                 bbox2d: BoundingBox2D = BoundingBox2D(
-                    center=Pose2D(x=center[0], y=center[1]))
+                    center=Pose2D(x=center[0], y=center[1])
+                )
 
                 detection2D = Detection2D()
                 detection2D.bbox = bbox2d
                 # detection2D.source_img = rgb_img[min_x:max_x, min_y:max_y]
                 detection2D.is_tracking = False
-                detection2D.results.append(
-                    ObjectHypothesisWithPose(score=float(score)))
+                detection2D.results.append(ObjectHypothesisWithPose(score=float(score)))
 
                 detections.detections.append(detection2D)
-            self.detetion_publisher.publish(detections)
+            self.detection_publisher.publish(detections)
 
             if self.debug:
                 visualization_img = rgb_img.copy()
                 for box in new_boxes:
-                    cv2.rectangle(visualization_img,
-                                  box[0],
-                                  box[1],
-                                  (0, 255, 0), thickness=2)
-                cv2.putText(visualization_img, f"FPS: {1 / (time.time()-start)}", (10, 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
-                cv2.imshow("Detection Result", cv2.resize(
-                    visualization_img, (800, 600)))
+                    cv2.rectangle(
+                        visualization_img, box[0], box[1], (0, 255, 0), thickness=2
+                    )
+                cv2.putText(
+                    visualization_img,
+                    f"FPS: {1 / (time.time()-start)}",
+                    (10, 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 0, 0),
+                    2,
+                )
+                cv2.imshow(
+                    "Detection Result", cv2.resize(visualization_img, (800, 600))
+                )
                 cv2.imshow("Raw", cv2.resize(rgb_img, (800, 600)))
                 cv2.waitKey(1)
         except Exception as e:
             self.get_logger().error(f"{e}")
 
     def detected_photo(self, boxes, scores, classes, detections, image):
-        boxes = (boxes[0] * [self.WIDTH, self.HEIGHT,
-                 self.WIDTH, self.HEIGHT]).astype(int)
+        boxes = (boxes[0] * [self.WIDTH, self.HEIGHT, self.WIDTH, self.HEIGHT]).astype(
+            int
+        )
         scores = scores[0]
         classes = classes[0].astype(int)
         detections = detections[0]
 
         CLASSES = [
-            'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck',
-            'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench',
-            'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra',
-            'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
-            'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove',
-            'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork',
-            'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli',
-            'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch', 'potted plant',
-            'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard',
-            'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book',
-            'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
+            "person",
+            "bicycle",
+            "car",
+            "motorcycle",
+            "airplane",
+            "bus",
+            "train",
+            "truck",
+            "boat",
+            "traffic light",
+            "fire hydrant",
+            "stop sign",
+            "parking meter",
+            "bench",
+            "bird",
+            "cat",
+            "dog",
+            "horse",
+            "sheep",
+            "cow",
+            "elephant",
+            "bear",
+            "zebra",
+            "giraffe",
+            "backpack",
+            "umbrella",
+            "handbag",
+            "tie",
+            "suitcase",
+            "frisbee",
+            "skis",
+            "snowboard",
+            "sports ball",
+            "kite",
+            "baseball bat",
+            "baseball glove",
+            "skateboard",
+            "surfboard",
+            "tennis racket",
+            "bottle",
+            "wine glass",
+            "cup",
+            "fork",
+            "knife",
+            "spoon",
+            "bowl",
+            "banana",
+            "apple",
+            "sandwich",
+            "orange",
+            "broccoli",
+            "carrot",
+            "hot dog",
+            "pizza",
+            "donut",
+            "cake",
+            "chair",
+            "couch",
+            "potted plant",
+            "bed",
+            "dining table",
+            "toilet",
+            "tv",
+            "laptop",
+            "mouse",
+            "remote",
+            "keyboard",
+            "cell phone",
+            "microwave",
+            "oven",
+            "toaster",
+            "sink",
+            "refrigerator",
+            "book",
+            "clock",
+            "vase",
+            "scissors",
+            "teddy bear",
+            "hair drier",
+            "toothbrush",
         ]
         ########################################################################
 
@@ -157,20 +238,32 @@ class YoloV4DetecotrNode(rclpy.node.Node):
         for (xmin, ymin, xmax, ymax), score, class_idx in zip(boxes, scores, classes):
 
             if score > 0:
-                if class_idx == 2:         # show bounding box only to the "car" class
+                if class_idx == 2:  # show bounding box only to the "car" class
 
                     #### Draw a rectangle ##################
                     # convert from tf.Tensor to numpy
 
                     box = (int(xmin), int(ymin), int(xmax), int(ymax))
 
-                    cv2.rectangle(image_cv, (int(xmin), int(ymin)), (int(
-                        xmax), int(ymax)), (0, 255, 0), thickness=2)
+                    cv2.rectangle(
+                        image_cv,
+                        (int(xmin), int(ymin)),
+                        (int(xmax), int(ymax)),
+                        (0, 255, 0),
+                        thickness=2,
+                    )
 
                     # Add detection text to the prediction
-                    text = CLASSES[class_idx] + ': {0:.2f}'.format(score)
-                    cv2.putText(image_cv, text, (int(xmin), int(ymin) - 5),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    text = CLASSES[class_idx] + ": {0:.2f}".format(score)
+                    cv2.putText(
+                        image_cv,
+                        text,
+                        (int(xmin), int(ymin) - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 255, 0),
+                        2,
+                    )
                     result_boxes.append(box)
                     result_scores.append(score)
         # image_cv = cv2.normalize(
@@ -180,15 +273,14 @@ class YoloV4DetecotrNode(rclpy.node.Node):
     def proccess_frame(self, photo, model):
         images = self.resize_image(photo)
         boxes, scores, classes, detections = model.predict(images)
-        result_img = self.detected_photo(
-            boxes, scores, classes, detections, images[0])
+        result_img = self.detected_photo(boxes, scores, classes, detections, images[0])
         return result_img
 
     def resize_image(self, image):
         # Resize the output_image:
         image = tf.image.resize(image, (self.HEIGHT, self.WIDTH))
         # Add a batch dim:
-        images = tf.expand_dims(image, axis=0)/255
+        images = tf.expand_dims(image, axis=0) / 255
         return images
 
 
@@ -198,5 +290,5 @@ def main(args=None):
     rclpy.spin(node)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
