@@ -19,23 +19,11 @@ def generate_launch_description():
         [
             Node(
                 package="deep_sort_ros2",
-                executable="deep_sort_tracker_node",
-                name="deep_sort_tracker_node",
+                executable="test_node",
+                name="test_node",
                 output="screen",
                 emulate_tty=True,
-                parameters=[
-                    {"model_data_path": model_data_path},
-                    {"image_topic": "test_image"},
-                    {"debug": True},
-                ],
-            ),
-            Node(
-                package="deep_sort_ros2",
-                executable="test_video_player_node",
-                name="test_video_player_node",
-                output="screen",
-                emulate_tty=True,
-                parameters=[{"video_path": video_path}, {"debug": True}],
+                parameters=[],
             ),
         ]
     )
